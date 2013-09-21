@@ -1,0 +1,21 @@
+name:                haskell-duplicate-finder
+version:             0.1.0.0
+synopsis:            Library for finding duplicate files employing various methods of hashing.
+description:         Library and application for finding duplicate files employing various methods of hashing and analysis.
+license:             GPL-3
+license-file:        LICENSE
+author:              Anja Berens
+maintainer:          pharaun666@gmail.com
+category:            System
+build-type:          Simple
+cabal-version:       >=1.8
+
+executable haskell-duplicate-finder
+  Hs-source-dirs: src
+  main-is: Main.hs
+
+  build-depends:
+    base ==4.6.*,
+    posix-paths,
+    bytestring,
+    optparse-applicative
