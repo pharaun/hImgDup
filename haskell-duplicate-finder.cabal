@@ -16,6 +16,16 @@ executable haskell-duplicate-finder
 
   build-depends:
     base ==4.6.*,
+    unix,
     posix-paths,
     bytestring,
-    optparse-applicative
+    text,
+    utf8-string,
+    containers,
+    cereal,
+    conduit,
+    crypto-conduit,
+    cryptohash,
+    cryptohash-cryptoapi,
+    transformers
+--    optparse-applicative
