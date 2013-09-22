@@ -76,35 +76,40 @@ import Crypto.Hash.CryptoAPI
 main :: IO ()
 main = do
     -- Ideally have a fancy command line parser here but for now just have a vanilla string
-    let path = fromString "/storage/other/pictures_photos/pictures/"
+    let path = fromString "/storage/other/pictures_photos/pictures/anime_2d_peoples"
 
     a <- (M.filter (\c -> DL.length c > 1)) `fmap` (directory path)
 
---    b <- fileHash M.empty a
+    b <- hashDirectory path
 
-    print a
-
-
+    print b
 
 
-fileHash :: M.Map B.ByteString [RawFilePath] -> M.Map Int64 [RawFilePath] -> IO (M.Map B.ByteString [RawFilePath])
-fileHash m p = F.foldlM hashFiles m p
+hashDirectory :: RawFilePath -> IO RawFilePath
+hashDirectory p = getSymbolicLinkStatus p >>= \fs ->
+    if isRegularFile fs
+    then (do
+            hash <- singleFileHash p
+            case hash of
+                Nothing -> print "" >> return p
+                Just h  -> print (h, p) >> return p
+         )
+    else if isDirectory fs
+         then traverseDirectory findFileHash "" p >> return p
+         else print "" >> return p
 
-hashFiles :: M.Map B.ByteString [RawFilePath] -> [RawFilePath] -> IO (M.Map B.ByteString [RawFilePath])
-hashFiles m ps = do
-    -- This can be done more efficiently
-    hashList <- CL.sourceList ps $$ CL.mapMaybeM mapFileHash =$ CL.consume
---    print hashList
-    return $ M.unionWith (++) m (M.fromList hashList)
 
+findFileHash :: String-> RawFilePath -> IO String
+findFileHash s p = getSymbolicLinkStatus p >>= \fs ->
+    if isRegularFile fs
+    then (do
+        hash <- singleFileHash p
+        case hash of
+            Nothing -> return s
+            Just h  -> print (h, p) >> return s
+         )
+    else return s
 
-mapFileHash :: RawFilePath -> IO (Maybe (B.ByteString, [RawFilePath]))
-mapFileHash p = do
-    hash <- singleFileHash p
-
-    case hash of
-        Nothing -> return Nothing
-        Just h  -> return $ Just (h, [p])
 
 -- Rewrite this to catch and handle the exception on file not existing and no access so that
 -- there is no race case
@@ -137,6 +142,7 @@ sourceFd f = liftIO (fdToHandle f) >>= loop
             unless (B.null bs) $ yield bs >> loop h
 
 
+
 -- TODO: fix this up, this is inefficient, write it in unfoldR
 toHex :: B.ByteString -> B.ByteString
 toHex = B.concatMap word8ToHex
@@ -148,13 +154,6 @@ toHex = B.concatMap word8ToHex
         pad :: String -> String
         pad [x] = ['0', x]
         pad s   = s
-
-
-
-
-
-
-
 
 
 
@@ -178,3 +177,104 @@ findFileSize s p = getSymbolicLinkStatus p >>= \fs ->
 -- COff -> Int64
 fileSizeAsInt :: FileStatus -> Int64
 fileSizeAsInt = fromIntegral . fileSize
+
+
+
+--import Control.Applicative ((<$>))
+--import Control.DeepSeq (($!!))
+--import Control.Exception (bracket)
+--import Data.Word (Word8)
+--import Numeric (showHex)
+--import System.IO hiding (FilePath)
+--import qualified Crypto.Hash.Ed2k as E
+--import qualified Data.ByteString as B
+--import qualified Data.ByteString.Char8 as C
+--import Control.Monad
+--
+--import System.Posix.Files (getFileStatus, isRegularFile, isDirectory, fileAccess, getSymbolicLinkStatus, isRegularFile, isDirectory)
+--import System.Directory (doesDirectoryExist, doesFileExist, getDirectoryContents)
+--import System.FilePath (combine)
+--
+---- Conduit
+--import Control.Monad.IO.Class (liftIO, MonadIO)
+--import Crypto.Conduit (sinkHash)
+--import Data.Conduit (($$), (=$), runResourceT, MonadResource, Source, yield, bracketP)
+--import Data.Conduit.Filesystem (traverse)
+--import Data.Serialize (encode)
+--import qualified Data.Conduit.List as CL
+--
+---- Better FilePath
+--import Prelude hiding (FilePath)
+--import Filesystem (listDirectory)
+--import Filesystem.Path.CurrentOS (FilePath, encodeString, decodeString, (</>))
+--import qualified System.IO as FP
+--
+--
+---- Takes a list of FP.FilePath and convert it to real FilePath then map over it and
+---- send it to directorySync where the real magic happens
+--fileDirectoryHash :: [FP.FilePath] -> IO [(FP.FilePath, String)]
+--fileDirectoryHash p = concat <$> mapM (directoryHash . decodeString) p
+--
+--directoryHash :: FilePath -> IO [(FP.FilePath, String)]
+--directoryHash p = getSymbolicLinkStatus (encodeString p) >>= \fs ->
+--    if isRegularFile fs
+--    then fileHash p
+--    else if isDirectory fs
+--         then traverse False (\_ -> True) p $$ CL.concatMapM fileHash =$ CL.consume
+--         else return []
+--
+---- TODO: deal with file access, permission, symlink, hardlinks, etc
+---- Doing the IO with a custom (1024*1024) bigBlock conduit sourceFile
+--fileHash :: FilePath -> IO [(FP.FilePath, String)]
+--fileHash p = getSymbolicLinkStatus (encodeString p) >>= \fs ->
+--    if isRegularFile fs
+--    then fileAccess (encodeString p) True False False >>= \canRead ->
+--        if canRead
+--        then (do
+--            digest <- runResourceT $ bigSourceFile (encodeString p) $$ sinkHash
+--            let hash = encode (digest :: E.ED2K)
+--            return [fileLine (encodeString p) hash])
+--        else return []
+--    else return []
+--
+---- Custom bigBlock Conduit sourceFile with 1MiB blocks
+--bigSourceFile :: MonadResource m => FP.FilePath -> Source m B.ByteString
+--bigSourceFile file = bracketP (openBinaryFile file ReadMode) hClose sourceHandle
+--
+--sourceHandle :: MonadIO m => Handle -> Source m B.ByteString
+--sourceHandle h = loop
+--    where
+--        loop = do
+--            bs <- liftIO (B.hGetSome h (1024*1024))
+--            unless (B.null bs) $ yield bs >> loop
+--
+--fileLine :: FP.FilePath -> B.ByteString -> (FP.FilePath, String)
+--fileLine path hash = (path, show $ toHex hash)
+--
+---- TODO: fix this up, this is inefficient, write it in unfoldR
+--toHex :: B.ByteString -> B.ByteString
+--toHex = B.concatMap word8ToHex
+--    where
+--        word8ToHex :: Word8 -> B.ByteString
+--        word8ToHex w = C.pack $ pad $ showHex w []
+--
+--        -- We know that the input will always be 1 or 2 characters long.
+--        pad :: String -> String
+--        pad [x] = ['0', x]
+--        pad s   = s
+--
+---- Doing the IO myself, in managed strict hGet (1MiB chunks)
+--traditionalFileHash :: [FP.FilePath] -> IO [(FP.FilePath, String)]
+--traditionalFileHash files = forM files (\path -> do
+--        hash <- withFile path ReadMode (`foreach` E.initEd2k)
+--        return $ fileLine path hash)
+--    where
+--        foreach :: Handle -> E.Ctx -> IO B.ByteString
+--        foreach fh ctx = do
+--            let size = 1024 * 1024 -- Found via trial runs (1MiB)
+--            a <- B.hGet fh size
+--            if B.null a
+--            then return $ E.finalizeEd2k ctx
+--            -- Then also a deepseq here to force the foreach to release
+--            -- the chunks of bytestring that it wants to rentain
+--            else foreach fh $!! E.updateEd2k ctx a
