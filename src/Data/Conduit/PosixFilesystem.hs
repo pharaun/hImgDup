@@ -33,28 +33,37 @@ import           Control.Monad.IO.Class (MonadIO, liftIO)
 import           Data.Conduit
 import qualified Data.ByteString as B
 
-
---listDirectory :: RawFilePath -> IO [RawFilePath]
---listDirectory root = do
---    namesAndTypes <- getDirectoryContents root
---    let properNames = filter ((`notElem` [".", ".."]) . snd) namesAndTypes
---    paths <- forM properNames $ \(typ,name) -> unsafeInterleaveIO $ do
---        let path = root </> name
---        case () of
---            () | typ == dtDir -> allDirectoryContents path
---               | typ == dtUnknown -> do
---                    isDir <- isDirectory <$> getFileStatus path
---                    if isDir
---                        then allDirectoryContents path
---                        else return [path]
---               | otherwise -> return [path]
---    return (root : concat paths)
+import Control.Applicative ((<$>))
+import           System.IO.Error
 
 
-listDirectory :: RawFilePath -> IO [(DirType, RawFilePath)]
-listDirectory root = do
-    content <- liftIO (getDirectoryContents root)
-    return $ filter ((`notElem` [".", ".."]) . snd) content
+-- | This lists all items in a directory (files, sub directories, etc..) and returns
+-- a tuple which indicates the file/directory type and the full path to that entity.
+listDirectory :: Bool -- ^ Raise an exception if we cannot access the directory content
+              -> RawFilePath -- ^ Root directory
+              -> IO [(DirType, RawFilePath)]
+listDirectory raiseException root = do
+    content <- liftIO $ tryIOError $ getDirectoryContents root
+
+    case content of
+        Left e ->
+            if isPermissionError e && (not raiseException)
+                then return []
+                else liftIO $ ioError e
+
+        Right ps -> return $ map (\(t, p) -> (t, root </> p)) $ filter ((`notElem` [".", ".."]) . snd) ps
+
+
+
+
+--                        ps' <- liftIO $ tryIOError $ listDirectory p
+--                        case ps' of
+--                            Left e ->
+--                                if isPermissionError e && skipDirs p
+--                                then pull ps
+--                                else liftIO $ ioError e
+--                            Right ps'' -> pull ps >> pull ps''
+
 
 
 -- | Starting at some root directory, traverse the filesystem and enumerate
@@ -63,77 +72,51 @@ listDirectory root = do
 -- Note: This only works with POSIX platforms since it returns RawFilePath.
 traverse :: MonadIO m
          => Bool -- ^ Follow directory symlinks
-         -> Bool -- ^ Skip directory that we cannot access
-         -> Bool -- ^ Skip any non real file
+         -> Bool -- ^ Raise Exception if we can't access a directory, or fail to follow a symlink
          -> RawFilePath -- ^ Root directory
          -> Producer m RawFilePath
-traverse followSymLinks skipInvalidAccess skipNonRealFile root =
-    liftIO (listDirectory root) >>= pull
+traverse followSymLinks raise root =
+    liftIO (listDirectory raise root) >>= pull
     where
         pull [] = return ()
-        pull (p:ps) = do
-            return ()
+        pull ((dType, path):ps)
+            -- Regular files
+            | dType == dtReg = yield path >> pull ps
+
+            -- Regular directory
+            | dType == dtDir = do
+                ps' <- liftIO (listDirectory raise path)
+                pull ps
+                pull ps'
+
+            -- Symlinks
+            | dType == dtLnk = do
+                -- Identify what the link is pointing to then keep going
+                -- readSymbolicLink is not recursive
+                -- TODO: symlink follow
+                pull ps
+
+            -- Unknown, check if link or a directory
+            | dType == dtUnknown = do
+                fs <- liftIO $ getFileStatus path
+                case () of
+                     () | isDirectory fs    -> liftIO (listDirectory raise path) >>= pull >> pull ps
+                        | isRegularFile fs  -> yield path >> pull ps
+
+                        | isSymbolicLink fs -> pull ps -- TODO: implement
+
+                        | otherwise         -> pull ps
+
+            -- Otherwise
+            | otherwise = pull ps
 
 
-
--- traverse _followSymlinks root =
---     liftIO (listDirectory root) >>= pull
---   where
---     pull [] = return ()
---     pull (p:ps) = do
---         isFile' <- liftIO $ isFile p
---         if isFile'
---             then yield p >> pull ps
---             else do
---                 follow' <- liftIO $ follow p
---                 if follow'
---                     then do
---                         ps' <- liftIO $ listDirectory p
---                         pull ps
---                         pull ps'
---                     else pull ps
--- 
---     follow :: FilePath -> IO Bool
---     follow p = do
---         let path = encodeString p
---         stat <- if _followSymlinks
---             then Posix.getFileStatus path
---             else Posix.getSymbolicLinkStatus path
---         return (Posix.isDirectory stat)
--- 
--- 
--- findFileHash s p = getSymbolicLinkStatus p >>= \fs ->
---     if isRegularFile fs
---     then (do
---         hash <- singleFileHash p
---         case hash of
---             Nothing -> return s
---             Just h  -> print (h, p) >> return s
---          )
---     else return s
--- 
--- 
--- -- Rewrite this to catch and handle the exception on file not existing and no access so that
--- -- there is no race case
--- singleFileHash :: RawFilePath -> IO (Maybe B.ByteString)
--- singleFileHash f = do
---     fileExist <- fileExist f
---     if fileExist
---         then do
---             canAccess <- fileAccess f True False False
---             if canAccess
---                 then do
--- 
--- 
--- 
--- 
--- 
 -- -- | Same as 'CB.sourceFile', but uses system-filepath\'s @FilePath@ type.
 -- sourceFile :: MonadResource m
 --            => FilePath
 --            -> Producer m S.ByteString
 -- sourceFile = CB.sourceFile . encodeString
--- 
+--
 -- -- | Same as 'CB.sinkFile', but uses system-filepath\'s @FilePath@ type.
 -- sinkFile :: MonadResource m
 --          => FilePath
