@@ -8,7 +8,8 @@ import Data.Int
 import System.Posix.FilePath
 import System.Posix.Directory.Traversals
 
-import Data.ByteString.UTF8 (fromString)
+import Data.ByteString.UTF8 (fromString, toString)
+
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as C
 import qualified Data.ByteString.Lazy as BL
@@ -36,33 +37,10 @@ import Data.Serialize (encode)
 import Crypto.Hash.CryptoAPI
 
 
-import Control.Applicative ((<$>))
-import Control.DeepSeq (($!!))
-import Control.Exception (bracket)
-import Data.Word (Word8)
-import Numeric (showHex)
-import System.IO hiding (FilePath)
-import qualified Crypto.Hash.Ed2k as E
-import qualified Data.ByteString as B
-import qualified Data.ByteString.Char8 as C
-import Control.Monad
+-- PosixFilesystem
+import Data.Conduit.PosixFilesystem
 
-import System.Posix.Files (getFileStatus, isRegularFile, isDirectory, fileAccess, getSymbolicLinkStatus, isRegularFile, isDirectory)
-import System.Directory (doesDirectoryExist, doesFileExist, getDirectoryContents)
-import System.FilePath (combine)
-
--- Conduit
-import Control.Monad.IO.Class (liftIO, MonadIO)
-import Crypto.Conduit (sinkHash)
-import Data.Conduit (($$), (=$), runResourceT, MonadResource, Source, yield, bracketP)
-import Data.Conduit.Filesystem (traverse)
-import Data.Serialize (encode)
-import qualified Data.Conduit.List as CL
-
--- Better FilePath
-import Prelude hiding (FilePath)
-import Filesystem (listDirectory)
-import Filesystem.Path.CurrentOS (FilePath, encodeString, decodeString, (</>))
+-- Handle io
 import qualified System.IO as FP
 
 
@@ -105,6 +83,7 @@ main :: IO ()
 main = do
     -- Ideally have a fancy command line parser here but for now just have a vanilla string
     let path = fromString "/storage/other/pictures_photos/pictures/anime_2d_peoples"
+--    let path = fromString "/storage/other/pictures_photos/pictures/anime_2d_peoples/madoka/image_pack/08 Comics/English/"
 
     a <- (M.filter (\c -> DL.length c > 1)) `fmap` (directory path)
 
@@ -150,74 +129,30 @@ singleFileHash f = do
 
 
 
-
--- Custom bigBlock Conduit sourceFile with 1MiB blocks
-bigSourceFile :: MonadResource m => RawFilePath -> Source m B.ByteString
-bigSourceFile file = bracketP (openFd file ReadOnly Nothing defaultFileFlags) closeFd sourceFd
-
-sourceFd :: MonadIO m => Fd -> Source m B.ByteString
-sourceFd f = liftIO (fdToHandle f) >>= loop
-    where
-        loop h = do
-            bs <- liftIO (B.hGetSome h (1024*1024))
-            unless (B.null bs) $ yield bs >> loop h
-
-
--- TODO: fix this up, this is inefficient, write it in unfoldR
-toHex :: B.ByteString -> B.ByteString
-toHex = B.concatMap word8ToHex
-    where
-        word8ToHex :: Word8 -> B.ByteString
-        word8ToHex w = C.pack $ pad $ showHex w []
-
-        -- We know that the input will always be 1 or 2 characters long.
-        pad :: String -> String
-        pad [x] = ['0', x]
-        pad s   = s
-
-
-
-
--- Takes a list of FP.FilePath and convert it to real FilePath then map over it and
--- send it to directorySync where the real magic happens
-fileDirectoryHash :: [FP.FilePath] -> IO [(FP.FilePath, String)]
-fileDirectoryHash p = concat <$> mapM (directoryHash . decodeString) p
-
-directoryHash :: FilePath -> IO [(FP.FilePath, String)]
-directoryHash p = getSymbolicLinkStatus (encodeString p) >>= \fs ->
-    if isRegularFile fs
-    then fileHash p
-    else if isDirectory fs
-         then traverse False (\_ -> True) p $$ CL.concatMapM fileHash =$ CL.consume
-         else return []
-
--- TODO: deal with file access, permission, symlink, hardlinks, etc
--- Doing the IO with a custom (1024*1024) bigBlock conduit sourceFile
-fileHash :: FilePath -> IO [(FP.FilePath, String)]
-fileHash p = getSymbolicLinkStatus (encodeString p) >>= \fs ->
-    if isRegularFile fs
-    then fileAccess (encodeString p) True False False >>= \canRead ->
-        if canRead
-        then (do
-            digest <- runResourceT $ bigSourceFile (encodeString p) $$ sinkHash
-            let hash = encode (digest :: E.ED2K)
-            return [fileLine (encodeString p) hash])
-        else return []
-    else return []
-
--- Custom bigBlock Conduit sourceFile with 1MiB blocks
-bigSourceFile :: MonadResource m => FP.FilePath -> Source m B.ByteString
-bigSourceFile file = bracketP (openBinaryFile file ReadMode) hClose sourceHandle
-
-sourceHandle :: MonadIO m => Handle -> Source m B.ByteString
+sourceHandle :: MonadIO m => FP.Handle -> Source m B.ByteString
 sourceHandle h = loop
     where
         loop = do
             bs <- liftIO (B.hGetSome h (1024*1024))
             unless (B.null bs) $ yield bs >> loop
 
-fileLine :: FP.FilePath -> B.ByteString -> (FP.FilePath, String)
-fileLine path hash = (path, show $ toHex hash)
+
+
+
+
+-- Custom bigBlock Conduit sourceFile with 1MiB blocks
+bigSourceFile :: MonadResource m => RawFilePath -> Source m B.ByteString
+bigSourceFile file = bracketP (openRaw file) FP.hClose sourceHandle
+    where
+        openRaw p = do
+            fd <- openFd p ReadOnly Nothing defaultFileFlags
+            handle <- fdToHandle fd
+            return handle
+
+
+
+
+
 
 -- TODO: fix this up, this is inefficient, write it in unfoldR
 toHex :: B.ByteString -> B.ByteString
@@ -230,6 +165,8 @@ toHex = B.concatMap word8ToHex
         pad :: String -> String
         pad [x] = ['0', x]
         pad s   = s
+
+
 
 
 

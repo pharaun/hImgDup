@@ -27,5 +27,10 @@ executable haskell-duplicate-finder
     crypto-conduit,
     cryptohash,
     cryptohash-cryptoapi,
-    transformers
+    transformers,
+    system-filepath,
+    system-fileio,
+    filesystem-conduit,
+    filepath,
+    directory
 --    optparse-applicative
