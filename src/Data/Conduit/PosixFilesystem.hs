@@ -15,26 +15,27 @@
 -- Posix Bytestring API.
 module Data.Conduit.PosixFilesystem
     ( traverse
---    , sourceFile
---    , sinkFile
+    , sourceFile
+    , sinkFile
     ) where
 
 -- Posix support
-import System.Posix.Files.ByteString
-import System.Posix.Types
-import System.Posix.IO.ByteString
 import System.Posix.Directory.Foreign
+import System.Posix.Files.ByteString
+import System.Posix.IO.ByteString
+import System.Posix.Types
 
 -- Better FilePath
 import System.Posix.FilePath
 import System.Posix.Directory.Traversals (getDirectoryContents)
 
-import           Control.Monad.IO.Class (MonadIO, liftIO)
-import           Data.Conduit
+import Control.Monad.IO.Class (MonadIO, liftIO)
+import Data.Conduit
+import qualified Data.Conduit.Binary as CB
 import qualified Data.ByteString as B
 
 import Control.Applicative ((<$>))
-import           System.IO.Error
+import System.IO.Error
 
 
 -- | This lists all items in a directory (files, sub directories, etc..) and returns
@@ -53,25 +54,23 @@ listDirectory raiseException root = do
 
         Right ps -> return $ map (\(t, p) -> (t, root </> p)) $ filter ((`notElem` [".", ".."]) . snd) ps
 
-identifyFile :: Bool -> Bool -> RawFilePath -> IO (Maybe (DirType, RawFilePath))
-identifyFile follow raise path = do
-    -- TODO: make this immune to exception, have it reraise or just skip
+-- | This identifies a file using getFileStatus which follows symbolic
+-- links, then return the file identification in terms of DirType.
+identifyFile :: Bool -- ^ Follow the symbolic link for directories
+             -> Bool -- ^ Raise an exception if the getFileStatus fails
+             -> RawFilePath -- ^ File/Directory to identify
+             -> IO (Maybe (DirType, RawFilePath))
+identifyFile followSymLinks raiseException path = do
     fs <- tryIOError $ getFileStatus path
     case fs of
-        Left  e -> if (not raise) || (not follow) -- TODO: not sure this is right
+        Left  e -> if (not raiseException) || (not followSymLinks) -- TODO: not sure this is right
                     then return Nothing
                     else liftIO $ ioError e
 
-        Right s -> case () of
-            -- TODO: consider if its better to follow the same pattern as
-            -- earlier, ie fetch directory then save and pull the rest of
-            -- its sibilings first
-                -- Check if its a directory or not, and if it is decide if
-                -- we want to follow or not, if its file or anything else
-                -- follow.
-            ()  | isDirectory s    -> if follow then return $ Just (dtDir, path) else return Nothing
-                | isRegularFile s  -> return $ Just (dtReg, path)
-                | otherwise        -> return Nothing
+        Right s -> return $ case () of
+            ()  | isDirectory s    -> if followSymLinks then Just (dtDir, path) else Nothing
+                | isRegularFile s  -> Just (dtReg, path)
+                | otherwise        -> Nothing
 
 -- | Starting at some root directory, traverse the filesystem and enumerate
 -- every file (or symlink to a file) found.
@@ -103,14 +102,14 @@ traverse followSymLinks raise root =
                     Nothing -> pull ps
                     Just z -> pull [z] >> pull ps
 
--- -- | Same as 'CB.sourceFile', but uses system-filepath\'s @FilePath@ type.
--- sourceFile :: MonadResource m
---            => FilePath
---            -> Producer m S.ByteString
--- sourceFile = CB.sourceFile . encodeString
---
--- -- | Same as 'CB.sinkFile', but uses system-filepath\'s @FilePath@ type.
--- sinkFile :: MonadResource m
---          => FilePath
---          -> Consumer S.ByteString m ()
--- sinkFile = CB.sinkFile . encodeString
+-- | Same as 'CB.sourceFile', but uses unix\'s @RawFilePath@ type.
+sourceFile :: MonadResource m
+           => RawFilePath
+           -> Producer m B.ByteString
+sourceFile path = CB.sourceIOHandle $ openFd path ReadOnly Nothing defaultFileFlags >>= fdToHandle
+
+-- | Same as 'CB.sinkFile', but uses unix\'s @RawFilePath@ type.
+sinkFile :: MonadResource m
+         => RawFilePath
+         -> Consumer B.ByteString m ()
+sinkFile path = CB.sinkIOHandle $ openFd path WriteOnly Nothing defaultFileFlags >>= fdToHandle
