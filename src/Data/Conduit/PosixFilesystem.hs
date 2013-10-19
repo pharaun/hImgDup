@@ -53,18 +53,25 @@ listDirectory raiseException root = do
 
         Right ps -> return $ map (\(t, p) -> (t, root </> p)) $ filter ((`notElem` [".", ".."]) . snd) ps
 
+identifyFile :: Bool -> Bool -> RawFilePath -> IO (Maybe (DirType, RawFilePath))
+identifyFile follow raise path = do
+    -- TODO: make this immune to exception, have it reraise or just skip
+    fs <- tryIOError $ getFileStatus path
+    case fs of
+        Left  e -> if (not raise) || (not follow) -- TODO: not sure this is right
+                    then return Nothing
+                    else liftIO $ ioError e
 
-
-
---                        ps' <- liftIO $ tryIOError $ listDirectory p
---                        case ps' of
---                            Left e ->
---                                if isPermissionError e && skipDirs p
---                                then pull ps
---                                else liftIO $ ioError e
---                            Right ps'' -> pull ps >> pull ps''
-
-
+        Right s -> case () of
+            -- TODO: consider if its better to follow the same pattern as
+            -- earlier, ie fetch directory then save and pull the rest of
+            -- its sibilings first
+                -- Check if its a directory or not, and if it is decide if
+                -- we want to follow or not, if its file or anything else
+                -- follow.
+            ()  | isDirectory s    -> if follow then return $ Just (dtDir, path) else return Nothing
+                | isRegularFile s  -> return $ Just (dtReg, path)
+                | otherwise        -> return Nothing
 
 -- | Starting at some root directory, traverse the filesystem and enumerate
 -- every file (or symlink to a file) found.
@@ -89,27 +96,12 @@ traverse followSymLinks raise root =
                 pull ps
                 pull ps'
 
-            -- Symlinks
-            | dType == dtLnk = do
-                -- Identify what the link is pointing to then keep going
-                -- readSymbolicLink is not recursive
-                -- TODO: symlink follow
-                pull ps
-
-            -- Unknown, check if link or a directory
-            | dType == dtUnknown = do
-                fs <- liftIO $ getFileStatus path
-                case () of
-                     () | isDirectory fs    -> liftIO (listDirectory raise path) >>= pull >> pull ps
-                        | isRegularFile fs  -> yield path >> pull ps
-
-                        | isSymbolicLink fs -> pull ps -- TODO: implement
-
-                        | otherwise         -> pull ps
-
             -- Otherwise
-            | otherwise = pull ps
-
+            | otherwise = do
+                t <- liftIO $ identifyFile followSymLinks raise path
+                case t of
+                    Nothing -> pull ps
+                    Just z -> pull [z] >> pull ps
 
 -- -- | Same as 'CB.sourceFile', but uses system-filepath\'s @FilePath@ type.
 -- sourceFile :: MonadResource m
