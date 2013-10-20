@@ -8,7 +8,7 @@ import Data.Int
 import System.Posix.FilePath
 import System.Posix.Directory.Traversals
 
-import Data.ByteString.UTF8 (fromString, toString)
+import Data.ByteString.UTF8 (fromString)
 
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as C
@@ -45,6 +45,8 @@ import qualified System.IO as FP
 
 -- Benchmarks
 import Criterion.Main
+import qualified Data.Conduit.Filesystem as DCF
+import qualified Filesystem.Path.CurrentOS as FPC
 
 
 -- 1. Scan directories for duplicate files
@@ -85,18 +87,30 @@ import Criterion.Main
 main :: IO ()
 main = do
     -- Ideally have a fancy command line parser here but for now just have a vanilla string
---    let path = fromString "/storage/other/pictures_photos/pictures"
-    let path = fromString "/storage/other/pictures_photos/pictures/anime_2d_peoples/"
+    let path = fromString "/storage/other/pictures_photos/pictures"
+--    let path = fromString "/storage/other/pictures_photos/pictures/anime_2d_peoples/"
 
     -- warmup
-    nfIO ((M.filter (\c -> DL.length c > 1)) `fmap` (directory path))
-    nfIO (directoryHash path)
-    nfIO (hashDirectory path)
+--    nfIO ((M.filter (\c -> DL.length c > 1)) `fmap` (directory path))
+--    nfIO (directoryHash path)
+--    nfIO (hashDirectory path)
+--
+--    defaultMain
+--        [ bgroup "file traverse hash"
+--            [ bench "traverseDirectory" $ nfIO $ hashDirectory path
+--            , bench "Conduittraverse"   $ nfIO $ directoryHash path
+--            ]
+--        ]
+
+    nfIO $ traverseDirectory (\s p -> return (p:s)) [] path
+    nfIO $ traverse True False path $$ CL.consume
+    nfIO $ DCF.traverse True (FPC.decode path) $$ CL.consume
 
     defaultMain
         [ bgroup "file traverse hash"
-            [ bench "traverseDirectory" $ nfIO $ hashDirectory path
-            , bench "Conduittraverse"   $ nfIO $ directoryHash path
+            [ bench "traverseDirectory" $ nfIO $ traverseDirectory (\s p -> return (p:s)) [] path
+            , bench "ConduitTraverseBS" $ nfIO $ traverse True False path $$ CL.consume
+            , bench "ConduittraverseFP" $ nfIO $ DCF.traverse True (FPC.decode path) $$ CL.consume
             ]
         ]
 

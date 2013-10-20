@@ -35,6 +35,7 @@ import qualified Data.Conduit.Binary as CB
 import qualified Data.ByteString as B
 
 import Control.Applicative ((<$>))
+import Control.Arrow (second)
 import System.IO.Error
 
 
@@ -44,15 +45,14 @@ listDirectory :: Bool -- ^ Raise an exception if we cannot access the directory 
               -> RawFilePath -- ^ Root directory
               -> IO [(DirType, RawFilePath)]
 listDirectory raiseException root = do
-    content <- liftIO $ tryIOError $ getDirectoryContents root
-
+    content <- tryIOError $ getDirectoryContents root
     case content of
         Left e ->
-            if isPermissionError e && (not raiseException)
+            if isPermissionError e && not raiseException
                 then return []
-                else liftIO $ ioError e
+                else ioError e
 
-        Right ps -> return $ map (\(t, p) -> (t, root </> p)) $ filter ((`notElem` [".", ".."]) . snd) ps
+        Right ps -> return $ map (second (root </>)) $ filter ((`notElem` [".", ".."]) . snd) ps
 
 -- | This identifies a file using getFileStatus which follows symbolic
 -- links, then return the file identification in terms of DirType.
@@ -63,9 +63,9 @@ identifyFile :: Bool -- ^ Follow the symbolic link for directories
 identifyFile followSymLinks raiseException path = do
     fs <- tryIOError $ getFileStatus path
     case fs of
-        Left  e -> if (not raiseException) || (not followSymLinks) -- TODO: not sure this is right
+        Left  e -> if not raiseException || not followSymLinks -- TODO: not sure this is right
                     then return Nothing
-                    else liftIO $ ioError e
+                    else ioError e
 
         Right s -> return $ case () of
             ()  | isDirectory s    -> if followSymLinks then Just (dtDir, path) else Nothing
@@ -97,7 +97,7 @@ traverse followSymLinks raise root =
 
             -- Otherwise
             | otherwise = do
-                t <- liftIO $ identifyFile followSymLinks raise path
+                t <- liftIO (identifyFile followSymLinks raise path)
                 case t of
                     Nothing -> pull ps
                     Just z -> pull [z] >> pull ps
