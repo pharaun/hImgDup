@@ -43,6 +43,9 @@ import Data.Conduit.PosixFilesystem
 -- Handle io
 import qualified System.IO as FP
 
+-- Benchmarks
+import Criterion.Main
+
 
 -- 1. Scan directories for duplicate files
 --     a. winnow it down by size
@@ -82,16 +85,44 @@ import qualified System.IO as FP
 main :: IO ()
 main = do
     -- Ideally have a fancy command line parser here but for now just have a vanilla string
-    let path = fromString "/storage/other/pictures_photos/pictures/anime_2d_peoples"
---    let path = fromString "/storage/other/pictures_photos/pictures/anime_2d_peoples/madoka/image_pack/08 Comics/English/"
+--    let path = fromString "/storage/other/pictures_photos/pictures"
+    let path = fromString "/storage/other/pictures_photos/pictures/anime_2d_peoples/"
 
-    a <- (M.filter (\c -> DL.length c > 1)) `fmap` (directory path)
+    -- warmup
+    nfIO ((M.filter (\c -> DL.length c > 1)) `fmap` (directory path))
+    nfIO (directoryHash path)
+    nfIO (hashDirectory path)
 
-    b <- directoryHash path
+    defaultMain
+        [ bgroup "file traverse hash"
+            [ bench "traverseDirectory" $ nfIO $ hashDirectory path
+            , bench "Conduittraverse"   $ nfIO $ directoryHash path
+            ]
+        ]
 
-    print b
+
+hashDirectory :: RawFilePath -> IO [(RawFilePath, Maybe B.ByteString)]
+hashDirectory p = getSymbolicLinkStatus p >>= \fs ->
+    if isRegularFile fs
+    then (do
+            hash <- hashMap p
+            return hash
+         )
+    else if isDirectory fs
+         then traverseDirectory findFileHash [] p >>= return
+         else return []
+
+findFileHash :: [(RawFilePath, Maybe B.ByteString)] -> RawFilePath -> IO [(RawFilePath, Maybe B.ByteString)]
+findFileHash s p = getSymbolicLinkStatus p >>= \fs ->
+    if isRegularFile fs
+    then (do
+        hash <- hashMap p
+        return hash
+        )
+    else return s
 
 
+-- Conduit traverse
 directoryHash :: RawFilePath -> IO [(RawFilePath, Maybe B.ByteString)]
 directoryHash p = do
     fs <- getFileStatus p
@@ -105,8 +136,9 @@ directoryHash p = do
 hashMap :: RawFilePath -> IO [(RawFilePath, Maybe B.ByteString)]
 hashMap p = do
     hash <- singleFileHash p
-    print $ show (p, hash)
+--    print $ show (p, hash)
     return [(p, hash)]
+
 
 -- Rewrite this to catch and handle the exception on file not existing and no access so that
 -- there is no race case

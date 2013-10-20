@@ -32,5 +32,6 @@ executable haskell-duplicate-finder
     system-fileio,
     filesystem-conduit,
     filepath,
-    directory
+    directory,
+    criterion
 --    optparse-applicative
