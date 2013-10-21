@@ -48,6 +48,8 @@ import Criterion.Main
 import qualified Data.Conduit.Filesystem as DCF
 import qualified Filesystem.Path.CurrentOS as FPC
 
+import qualified Data.ByteString.Base16 as BS16
+
 
 -- 1. Scan directories for duplicate files
 --     a. winnow it down by size
@@ -87,13 +89,13 @@ import qualified Filesystem.Path.CurrentOS as FPC
 main :: IO ()
 main = do
     -- Ideally have a fancy command line parser here but for now just have a vanilla string
-    let path = fromString "/storage/other/pictures_photos/pictures"
---    let path = fromString "/storage/other/pictures_photos/pictures/anime_2d_peoples/"
+--    let path = fromString "/storage/other/pictures_photos/pictures"
+    let path = fromString "/storage/other/pictures_photos/pictures/anime_2d_peoples/"
 
     -- warmup
 --    nfIO ((M.filter (\c -> DL.length c > 1)) `fmap` (directory path))
---    nfIO (directoryHash path)
 --    nfIO (hashDirectory path)
+--    nfIO (directoryHash path)
 --
 --    defaultMain
 --        [ bgroup "file traverse hash"
@@ -102,38 +104,31 @@ main = do
 --            ]
 --        ]
 
-    nfIO $ traverseDirectory (\s p -> return (p:s)) [] path
-    nfIO $ traverse True False path $$ CL.consume
-    nfIO $ DCF.traverse True (FPC.decode path) $$ CL.consume
-
-    defaultMain
-        [ bgroup "file traverse hash"
-            [ bench "traverseDirectory" $ nfIO $ traverseDirectory (\s p -> return (p:s)) [] path
-            , bench "ConduitTraverseBS" $ nfIO $ traverse True False path $$ CL.consume
-            , bench "ConduittraverseFP" $ nfIO $ DCF.traverse True (FPC.decode path) $$ CL.consume
-            ]
-        ]
+--    nfIO $ traverseDirectory (\s p -> return (p:s)) [] path
+--    nfIO $ traverse True False path $$ CL.consume
+--    nfIO $ DCF.traverse True (FPC.decode path) $$ CL.consume
+--    defaultMain
+--        [ bgroup "file traverse"
+--            [ bench "traverseDirectory" $ nfIO $ traverseDirectory (\s p -> return (p:s)) [] path
+--            , bench "ConduitTraverseBS" $ nfIO $ traverse True False path $$ CL.consume
+--            , bench "ConduittraverseFP" $ nfIO $ DCF.traverse True (FPC.decode path) $$ CL.consume
+--            ]
+--        ]
 
 
 hashDirectory :: RawFilePath -> IO [(RawFilePath, Maybe B.ByteString)]
 hashDirectory p = getSymbolicLinkStatus p >>= \fs ->
     if isRegularFile fs
-    then (do
-            hash <- hashMap p
-            return hash
-         )
+    then hashMap p
     else if isDirectory fs
          then traverseDirectory findFileHash [] p >>= return
          else return []
 
-findFileHash :: [(RawFilePath, Maybe B.ByteString)] -> RawFilePath -> IO [(RawFilePath, Maybe B.ByteString)]
-findFileHash s p = getSymbolicLinkStatus p >>= \fs ->
-    if isRegularFile fs
-    then (do
-        hash <- hashMap p
-        return hash
-        )
-    else return s
+    where
+    findFileHash s p = getSymbolicLinkStatus p >>= \fs ->
+        if isRegularFile fs
+        then hashMap p
+        else return s
 
 
 -- Conduit traverse
@@ -142,20 +137,13 @@ directoryHash p = do
     fs <- getFileStatus p
     case () of
         ()  | isDirectory fs    -> traverse True False p $$ CL.concatMapM hashMap =$ CL.consume
-            | isRegularFile fs  -> do
-                a <- hashMap p
-                return a
+            | isRegularFile fs  -> hashMap p
             | otherwise         -> return []
 
 hashMap :: RawFilePath -> IO [(RawFilePath, Maybe B.ByteString)]
-hashMap p = do
-    hash <- singleFileHash p
---    print $ show (p, hash)
-    return [(p, hash)]
+hashMap p = singleFileHash p >>= \hash -> return [(p, hash)]
 
-
--- Rewrite this to catch and handle the exception on file not existing and no access so that
--- there is no race case
+-- TODO: rewrite to catch exception for existing/access and just operate on that
 singleFileHash :: RawFilePath -> IO (Maybe B.ByteString)
 singleFileHash f = do
     fileExist <- fileExist f
@@ -173,8 +161,6 @@ singleFileHash f = do
                 else return $ Nothing
         else return $ Nothing
 
-
-
 sourceHandle :: MonadIO m => FP.Handle -> Source m B.ByteString
 sourceHandle h = loop
     where
@@ -182,37 +168,15 @@ sourceHandle h = loop
             bs <- liftIO (B.hGetSome h (1024*1024))
             unless (B.null bs) $ yield bs >> loop
 
-
-
-
-
 -- Custom bigBlock Conduit sourceFile with 1MiB blocks
 bigSourceFile :: MonadResource m => RawFilePath -> Source m B.ByteString
 bigSourceFile file = bracketP (openRaw file) FP.hClose sourceHandle
     where
-        openRaw p = do
-            fd <- openFd p ReadOnly Nothing defaultFileFlags
-            handle <- fdToHandle fd
-            return handle
+        -- TODO: This is KEY to convert to handle otherwise it leaks FP
+        openRaw p = openFd p ReadOnly Nothing defaultFileFlags >>= fdToHandle >>= return
 
-
-
-
-
-
--- TODO: fix this up, this is inefficient, write it in unfoldR
 toHex :: B.ByteString -> B.ByteString
-toHex = B.concatMap word8ToHex
-    where
-        word8ToHex :: Word8 -> B.ByteString
-        word8ToHex w = C.pack $ pad $ showHex w []
-
-        -- We know that the input will always be 1 or 2 characters long.
-        pad :: String -> String
-        pad [x] = ['0', x]
-        pad s   = s
-
-
+toHex = fst . BS16.decode
 
 
 

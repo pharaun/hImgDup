@@ -33,5 +33,6 @@ executable haskell-duplicate-finder
     filesystem-conduit,
     filepath,
     directory,
-    criterion
+    criterion,
+    base16-bytestring
 --    optparse-applicative
