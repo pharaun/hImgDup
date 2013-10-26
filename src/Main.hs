@@ -100,16 +100,15 @@ import qualified Filesystem.Path.CurrentOS as FPC
 main :: IO ()
 main = do
     -- Ideally have a fancy command line parser here but for now just have a vanilla string
-    let path = fromString "/storage/other/pictures_photos/pictures/anime_2d_peoples/"
+--    let path = fromString "/storage/other/pictures_photos/pictures/anime_2d_peoples/"
+    let path = fromString "/storage/other/pictures_photos/pictures/"
 
     -- warmup
     a <- (M.filter (\c -> DL.length c > 1)) `fmap` (directorySize path)
---    b <- directoryHash path
-    c <- filesHash a
+    b <- (M.filter (\c -> DL.length c > 1)) `fmap` (filesHash a)
+--    c <- directoryHash path
 
-    print a
---    print c
-    print "hi"
+    print b
 
 
 
@@ -140,10 +139,7 @@ foldFileHash :: MonadIO m => M.Map B.ByteString [RawFilePath] -> RawFilePath -> 
 foldFileHash s path = do
     hash <- liftIO $ singleFileHash path
     case hash of
-        Just h  -> do
-            liftIO $ print h
-            liftIO $ print path
-            return $ M.insert h (path:(M.findWithDefault [] h s)) s
+        Just h  -> return $ M.insert h (path:(M.findWithDefault [] h s)) s
         Nothing -> return s
 
 -- TODO: rewrite to catch exception for existing/access and just operate on that
@@ -177,7 +173,7 @@ bigSourceFile file = bracketP (openRaw file) FP.hClose sourceHandle
         openRaw p = openFd p ReadOnly Nothing defaultFileFlags >>= fdToHandle >>= return
 
 toHex :: B.ByteString -> B.ByteString
-toHex = fst . BS16.decode
+toHex = BS16.encode
 
 
 
