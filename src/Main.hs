@@ -36,6 +36,7 @@ import Data.Serialize (encode)
 
 import Crypto.Hash.CryptoAPI
 
+import qualified Data.ByteString.Base16 as BS16
 
 -- PosixFilesystem
 import Data.Conduit.PosixFilesystem
@@ -47,8 +48,18 @@ import qualified System.IO as FP
 import Criterion.Main
 import qualified Data.Conduit.Filesystem as DCF
 import qualified Filesystem.Path.CurrentOS as FPC
+--    nfIO $ traverseDirectory (\s p -> return (p:s)) [] path
+--    nfIO $ traverse True False path $$ CL.consume
+--    nfIO $ DCF.traverse True (FPC.decode path) $$ CL.consume
+--    defaultMain
+--        [ bgroup "file traverse"
+--            [ bench "traverseDirectory" $ nfIO $ traverseDirectory (\s p -> return (p:s)) [] path
+--            , bench "ConduitTraverseBS" $ nfIO $ traverse True False path $$ CL.consume
+--            , bench "ConduittraverseFP" $ nfIO $ DCF.traverse True (FPC.decode path) $$ CL.consume
+--            ]
+--        ]
 
-import qualified Data.ByteString.Base16 as BS16
+
 
 
 -- 1. Scan directories for duplicate files
@@ -89,46 +100,19 @@ import qualified Data.ByteString.Base16 as BS16
 main :: IO ()
 main = do
     -- Ideally have a fancy command line parser here but for now just have a vanilla string
---    let path = fromString "/storage/other/pictures_photos/pictures"
     let path = fromString "/storage/other/pictures_photos/pictures/anime_2d_peoples/"
 
     -- warmup
---    nfIO ((M.filter (\c -> DL.length c > 1)) `fmap` (directory path))
---    nfIO (hashDirectory path)
---    nfIO (directoryHash path)
---
---    defaultMain
---        [ bgroup "file traverse hash"
---            [ bench "traverseDirectory" $ nfIO $ hashDirectory path
---            , bench "Conduittraverse"   $ nfIO $ directoryHash path
---            ]
---        ]
+    a <- (M.filter (\c -> DL.length c > 1)) `fmap` (directorySize path)
+--    b <- directoryHash path
+    c <- filesHash a
 
---    nfIO $ traverseDirectory (\s p -> return (p:s)) [] path
---    nfIO $ traverse True False path $$ CL.consume
---    nfIO $ DCF.traverse True (FPC.decode path) $$ CL.consume
---    defaultMain
---        [ bgroup "file traverse"
---            [ bench "traverseDirectory" $ nfIO $ traverseDirectory (\s p -> return (p:s)) [] path
---            , bench "ConduitTraverseBS" $ nfIO $ traverse True False path $$ CL.consume
---            , bench "ConduittraverseFP" $ nfIO $ DCF.traverse True (FPC.decode path) $$ CL.consume
---            ]
---        ]
+    print a
+--    print c
+    print "hi"
 
 
-hashDirectory :: RawFilePath -> IO [(RawFilePath, Maybe B.ByteString)]
-hashDirectory p = getSymbolicLinkStatus p >>= \fs ->
-    if isRegularFile fs
-    then hashMap p
-    else if isDirectory fs
-         then traverseDirectory findFileHash [] p >>= return
-         else return []
 
-    where
-    findFileHash s p = getSymbolicLinkStatus p >>= \fs ->
-        if isRegularFile fs
-        then hashMap p
-        else return s
 
 
 -- Conduit traverse
@@ -143,6 +127,25 @@ directoryHash p = do
 hashMap :: RawFilePath -> IO [(RawFilePath, Maybe B.ByteString)]
 hashMap p = singleFileHash p >>= \hash -> return [(p, hash)]
 
+
+
+
+
+
+-- TODO: Do the hashing in a more efficient manner
+filesHash :: M.Map Int64 [RawFilePath] -> IO (M.Map B.ByteString [RawFilePath])
+filesHash s = CL.sourceList (M.elems s) $$ CL.foldM (F.foldlM foldFileHash) M.empty
+
+foldFileHash :: MonadIO m => M.Map B.ByteString [RawFilePath] -> RawFilePath -> m (M.Map B.ByteString [RawFilePath])
+foldFileHash s path = do
+    hash <- liftIO $ singleFileHash path
+    case hash of
+        Just h  -> do
+            liftIO $ print h
+            liftIO $ print path
+            return $ M.insert h (path:(M.findWithDefault [] h s)) s
+        Nothing -> return s
+
 -- TODO: rewrite to catch exception for existing/access and just operate on that
 singleFileHash :: RawFilePath -> IO (Maybe B.ByteString)
 singleFileHash f = do
@@ -154,8 +157,6 @@ singleFileHash f = do
                 then do
                     digest <- runResourceT $ bigSourceFile f $$ sinkHash
                     let hash = encode (digest :: MD5)
-
-                    -- Should hexify this
                     return $ Just $ toHex hash
 
                 else return $ Nothing
@@ -172,7 +173,7 @@ sourceHandle h = loop
 bigSourceFile :: MonadResource m => RawFilePath -> Source m B.ByteString
 bigSourceFile file = bracketP (openRaw file) FP.hClose sourceHandle
     where
-        -- TODO: This is KEY to convert to handle otherwise it leaks FP
+        -- This is KEY to convert to handle otherwise it leaks FP
         openRaw p = openFd p ReadOnly Nothing defaultFileFlags >>= fdToHandle >>= return
 
 toHex :: B.ByteString -> B.ByteString
@@ -180,20 +181,18 @@ toHex = fst . BS16.decode
 
 
 
--- File size n' stuff the traverseDirectory works good here
-directory :: RawFilePath -> IO (M.Map Int64 [RawFilePath])
-directory p = getSymbolicLinkStatus p >>= \fs ->
-    if isRegularFile fs
-    then return $ M.singleton (fileSizeAsInt fs) [p]
-    else if isDirectory fs
-         then traverseDirectory findFileSize M.empty p
-         else return M.empty
+directorySize :: RawFilePath -> IO (M.Map Int64 [RawFilePath])
+directorySize p = do
+    fs <- getFileStatus p
+    case () of
+        ()  | isDirectory fs    -> traverse True False p $$ CL.foldM singleFileSize M.empty
+            | isRegularFile fs  -> return $ M.singleton (fileSizeAsInt fs) [p]
+            | otherwise         -> return M.empty
 
-findFileSize :: M.Map Int64 [RawFilePath] -> RawFilePath -> IO (M.Map Int64 [RawFilePath])
-findFileSize s p = getSymbolicLinkStatus p >>= \fs ->
-    return $ if isRegularFile fs
-             then M.insert (fileSizeAsInt fs) (p:(M.findWithDefault [] (fileSizeAsInt fs) s)) s
-             else s
+singleFileSize :: MonadIO m => M.Map Int64 [RawFilePath] -> RawFilePath -> m (M.Map Int64 [RawFilePath])
+singleFileSize s path = do
+    size <- liftIO $ fileSizeAsInt `fmap` getFileStatus path
+    return $ M.insert size (path:(M.findWithDefault [] size s)) s
 
 -- COff -> Int64
 fileSizeAsInt :: FileStatus -> Int64
