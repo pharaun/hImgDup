@@ -31,8 +31,9 @@ import qualified Data.Conduit.List as CL
 -- Conduit
 import Crypto.Conduit (sinkHash, hashFile)
 import Control.Monad.IO.Class (liftIO, MonadIO)
-import Data.Conduit (($$), (=$), runResourceT, MonadResource, Source, yield, bracketP)
+import Data.Conduit (($$), (=$), Source, yield, bracketP)
 import Data.Serialize (encode)
+import Conduit (MonadBaseControl, MonadResource, runResourceT)
 
 import Crypto.Hash.CryptoAPI
 
@@ -41,12 +42,14 @@ import qualified Data.ByteString.Base16 as BS16
 -- PosixFilesystem
 import Data.Conduit.PosixFilesystem
 
+import Prelude hiding (traverse)
+
 -- Handle io
 import qualified System.IO as FP
 
 -- Benchmarks
 import Criterion.Main
-import qualified Data.Conduit.Filesystem as DCF
+import qualified Data.Conduit.Combinators as DCF
 import qualified Filesystem.Path.CurrentOS as FPC
 --    nfIO $ traverseDirectory (\s p -> return (p:s)) [] path
 --    nfIO $ traverse True False path $$ CL.consume
@@ -101,7 +104,7 @@ main :: IO ()
 main = do
     -- Ideally have a fancy command line parser here but for now just have a vanilla string
 --    let path = fromString "/storage/other/pictures_photos/pictures/anime_2d_peoples/"
-    let path = fromString "/storage/other/pictures_photos/pictures/"
+    let path = fromString "/storage/other/pictures_photos/pictures"
 
     -- warmup
     a <- (M.filter (\c -> DL.length c > 1)) `fmap` (directorySize path)

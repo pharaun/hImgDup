@@ -83,3 +83,37 @@ a. Context Piecewise Hashing
 b. perceptual hashing
     1. SAD
     2. SSAD - x264 code
+
+
+
+14:05:40 < CcxCZ> they have 3d stuff too, but otherwise not as big iirc
+14:07:42 < CcxCZ> guessing from the help page they run danbooru's software
+14:12:41 < CcxCZ> 17:52:40    ~piespy | and for iqdb use the index.xml interface, same parameters as a regular 
+search but you get an xml document back
+14:12:43 < CcxCZ> 17:54:02    ~piespy | POST and GET supported, and you're limited to 60 queries in any 5-minute 
+period or you get blocked
+Image Manager
+	- Deduplication
+		- SAD (works good, has problems)
+		- SVD, etc....
+		- Needs to deal with crop and rotated images
+		- Look at PNF (image quality) for calculating which image to prefer when deduping so that the highest quality one is selected by default
+	- Plays gif
+	- Drag & drop moving
+	- Shortcuts
+
+Image Rating
+	- Good, Meh, Bad
+	- Retain hash and SAD fingerprints of the meh/bad for rapid cleaning out from bulk downloads
+
+Image Bucketing
+	- Sort into "real vs anime vs etc..."
+
+Tag based FS
+	- fuse
+	- Central collection of images in hash datastore
+	- You have various tags such as - artist, series, character, etc
+
+Downloading
+	- Find a way to just download the image out of say danbooru with the tags intact
+	- this will pre-tag the images and pre-organize which will be helpful with upkeep

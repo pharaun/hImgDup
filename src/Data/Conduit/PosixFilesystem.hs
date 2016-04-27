@@ -38,6 +38,10 @@ import Control.Applicative ((<$>))
 import Control.Arrow (second)
 import System.IO.Error
 
+import Conduit (MonadBaseControl, MonadResource, runResourceT)
+
+import Prelude hiding (traverse)
+
 
 -- | This lists all items in a directory (files, sub directories, etc..) and returns
 -- a tuple which indicates the file/directory type and the full path to that entity.

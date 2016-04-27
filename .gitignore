@@ -1,3 +1,6 @@
-cabal-dev/
+*.hi
+*.o
+*.pyc
 dist/
+.stack-work/
 other/
