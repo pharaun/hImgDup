@@ -129,9 +129,14 @@ main = do
                 return $ F.toList $ zipPaths d
                 )
             , bench "dirStream"         $ nfIO $ P.runSafeT $ P.runEffect $ P.toListM (P.every (P.descendentOf path''))
-            , bench "pipesFiles"        $ nfIO $ P.runSafeT $ P.runEffect $ P.toListM (PF.find path (PF.regular))
+
+            -- TODO: currently crashes due to utf8 error tweak/use alternative filepath construct to avoid this
+            , bench "pipesFiles"        $ nfIO $ P.runSafeT $ P.runEffect $ P.toListM (PF.findFilePaths opt path (PF.regular))
             ]
         ]
+
+  where
+    opt = PF.defaultFindOptions { PF.findIgnoreErrors = True }
 
 
 
