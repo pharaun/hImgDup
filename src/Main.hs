@@ -44,6 +44,20 @@ import Data.Conduit.PosixFilesystem
 
 import Prelude hiding (traverse)
 
+
+-- Directory-tree
+import System.Directory.Tree
+import qualified System.FilePath.Posix as SFPP
+
+-- dirstreams
+import qualified Data.DirStream as P
+import qualified Pipes as P
+import qualified Pipes.Prelude as P
+import qualified Pipes.Safe as P
+
+-- pipes-files
+import qualified Pipes.Files as PF
+
 -- Handle io
 import qualified System.IO as FP
 
@@ -51,16 +65,6 @@ import qualified System.IO as FP
 import Criterion.Main
 import qualified Data.Conduit.Combinators as DCF
 import qualified Filesystem.Path.CurrentOS as FPC
---    nfIO $ traverseDirectory (\s p -> return (p:s)) [] path
---    nfIO $ traverse True False path $$ CL.consume
---    nfIO $ DCF.traverse True (FPC.decode path) $$ CL.consume
---    defaultMain
---        [ bgroup "file traverse"
---            [ bench "traverseDirectory" $ nfIO $ traverseDirectory (\s p -> return (p:s)) [] path
---            , bench "ConduitTraverseBS" $ nfIO $ traverse True False path $$ CL.consume
---            , bench "ConduittraverseFP" $ nfIO $ DCF.traverse True (FPC.decode path) $$ CL.consume
---            ]
---        ]
 
 
 
@@ -103,15 +107,31 @@ import qualified Filesystem.Path.CurrentOS as FPC
 main :: IO ()
 main = do
     -- Ideally have a fancy command line parser here but for now just have a vanilla string
---    let path = fromString "/storage/other/pictures_photos/pictures/anime_2d_peoples/"
-    let path = fromString "/storage/other/pictures_photos/pictures"
+    let path = "/storage/other/pictures_photos/pictures/anime_2d_peoples/"
+--    let path = fromString "/storage/other/pictures_photos/pictures"
+    let path' = fromString path
+    let path'' = FPC.decodeString path
 
     -- warmup
-    a <- (M.filter (\c -> DL.length c > 1)) `fmap` (directorySize path)
-    b <- (M.filter (\c -> DL.length c > 1)) `fmap` (filesHash a)
+--    a <- (M.filter (\c -> DL.length c > 1)) `fmap` (directorySize path)
+--    b <- (M.filter (\c -> DL.length c > 1)) `fmap` (filesHash a)
 --    c <- directoryHash path
+--    print b
 
-    print b
+    -- Benchmark
+    defaultMain
+        [ bgroup "file traverse"
+            [ bench "traverseDirectory" $ nfIO $ traverseDirectory (\s p -> return (p:s)) [] path'
+            , bench "ConduitTraverseBS" $ nfIO $ traverse True False path' $$ CL.consume
+            , bench "ConduitTraverseFP" $ nfIO $ runResourceT $ DCF.sourceDirectoryDeep True path $$ CL.consume
+            , bench "directoryTree"     $ nfIO (do
+                d <- readDirectoryWithL (return . SFPP.makeValid) path
+                return $ F.toList $ zipPaths d
+                )
+            , bench "dirStream"         $ nfIO $ P.runSafeT $ P.runEffect $ P.toListM (P.every (P.descendentOf path''))
+            , bench "pipesFiles"        $ nfIO $ P.runSafeT $ P.runEffect $ P.toListM (PF.find path (PF.regular))
+            ]
+        ]
 
 
 

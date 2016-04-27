@@ -44,4 +44,10 @@ executable hImgDup
                        , base16-bytestring
                        , conduit-combinators
                        , conduit-extra
+                       -- Drag in the pipes ecosystem (since that's what i am used to/like)
+                       , dirstream
+                       , directory-tree
+                       , pipes-files
+                       , pipes
+                       , pipes-safe
 --                       , optparse-applicative
